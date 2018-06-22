@@ -1,37 +1,42 @@
 import React, { Component } from 'react'
+import { scene, camera, renderer } from './lib/scene';
+import { convertoLatLng, convertToXYZ, geodecoder } from './lib/geoHelpers';
+import mapTexturer from './lib/mapTexturer'
+import { getTween, memoize } from './lib/utils';
 import worlddata from './data/world.json'
-import { geoEquirectangular, geoPath } from 'd3-geo'
 var topojson = require('topojson')
 var THREE = require('three')
+var d3 = require("d3");
+var raycaster = new THREE.Raycaster()
+var mouse = { x: 0, y: 0 , xdown: 0, ydown: 0, down: false, move: false }
+var mouseVector = new THREE.Vector2();
+var pickerPoint = new THREE.Vector3();
+
+var targetRotationX = 0.5, targetRotationY = 0.2;
+var windowHalfX = window.innerWidth / 2, windowHalfY = window.innerHeight / 2; 
+var currentCountry, overlay, pointer;
+var world = new THREE.Object3D();   // acts as an common 3d anchor point
+
+var countries = topojson.feature(worlddata, worlddata.objects.countries)
+var geo = geodecoder(countries.features);
+
+const pointerGeometry = new THREE.SphereGeometry(1, 300, 300);
+const pointerMaterial = new THREE.MeshPhongMaterial({color: 'red'});
+
+// world settings    
+var easeFactor = 0.10;  // lower it will stop later
+var sphereSegments = 300; // vertices of the wireframesSphere. Higher improves mouse accuracy
+var sphereRadius = 230;
+var wireframeOpacity = 0.15
 
 export default class WorldMap extends Component {
-
-  getWorldTexture = () => {
-      var canvas = document.createElement('canvas')
-      canvas.setAttribute('width','960px') // 1024px LOOK FOR arms project to watch for a better resolution
-      canvas.setAttribute('height','500px') // 512px
-      var context = canvas.getContext('2d')
-      var projection = geoEquirectangular()  //it's the final projection wrapper
-      var featureData = topojson.feature(worlddata, worlddata.objects.countries)
-      var pathGenerator = geoPath().projection(projection).context(context)//all the world map path
-         context.strokeStyle = "#056dba";
-         context.lineWidth = 0.25;
-         context.fillStyle = "#2ecc6f";
-         context.beginPath();
-
-         pathGenerator(featureData);  //draws alls the image data. HERE IT'S THE MAGIC
-
-         context.fill();
-         context.stroke();
-    
-      var texture = new THREE.Texture(canvas);
-      texture.needsUpdate = true;
-
-      canvas.remove();
-
-      return texture;
-      
-  } 
+  
+  constructor(props){
+    super(props)
+    this.state = {
+      currentCountry: ''
+    }
+  }
   
   rotateWorld = (object,axis, radians) => { // look for arms reference to look for better rotation!
      var rotationMatrix = new THREE.Matrix4();
@@ -40,89 +45,181 @@ export default class WorldMap extends Component {
       object.matrix = rotationMatrix;
       object.rotation.setFromRotationMatrix( object.matrix );
   }
- 
   
-   render() { 
-    /* would check ir document != null */
-    //render's global variables for mouse-dragging events for world rotation
-    var targetRotationX = 0.5;
-    var targetRotationY = 0.2;
-     
-    var mouseX = 0;
-    var mouseXOnMouseDown = 0;
-
-    var mouseY = 0;
-    var mouseYOnMouseDown = 0;
-
-    var windowHalfX = window.innerWidth / 2;
-    var windowHalfY = window.innerHeight / 2;
-    
-    var easeFactor = 0.15;
-     
-    //Set scene and three objects  
-    var scene = new THREE.Scene();
-    var camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 6000);
-        camera.position.z = 500;
-    var renderer = new THREE.WebGLRenderer({antialias: true});
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement); //I WOULD RETURN renderer.domElement in this method!
-    var light = new THREE.HemisphereLight('#fff', '#666', 1.5);
-        light.position.set(0, 500, 0);
-        scene.add(light);
-    var waterMaterial  = new THREE.MeshBasicMaterial({color: '#056dba', transparent: true});  
-    var mapMaterial = new THREE.MeshBasicMaterial({map: this.getWorldTexture(), transparent: true}); 
-    var sphere = new THREE.SphereGeometry(200, 100, 100);
-    var baseLayerMesh = new THREE.Mesh(sphere, waterMaterial);
-    var mapLayerMesh = new THREE.Mesh(sphere, mapMaterial);
-    var world = new THREE.Object3D();  // acts as an common 3d anchor point
-        world.add(baseLayerMesh)
-        world.add(mapLayerMesh)
-    scene.add(world)
-    
-    var onDocumentMouseDown = (e) => {
+  handleClick = (e) => {
         e.preventDefault();
-        document.addEventListener( 'mousemove', onDocumentMouseMove, false )
-        document.addEventListener( 'mouseup', onDocumentMouseUp, false )
-        document.addEventListener( 'mouseout', onDocumentMouseOut, false )
+        mouse.down = (e.buttons !== 0 ? true : false)
+        mouse.xdown = e.clientX 
+        mouse.ydown = e.clientY
+  }
+    
+  handleMouseMove = (e) => {
+        mouse.move = (e.type === 'mousemove' ? true : false)
+        mouse.x = ( e.clientX / window.innerWidth ) * 2 - 1;
+		mouse.y = -( e.clientY / window.innerHeight ) * 2 + 1;
+        if(mouse.down){ // its gragging
+          targetRotationX = ( (e.clientX - windowHalfX) - (mouse.xdown - windowHalfX)) * 0.00025;
+          targetRotationY = ( (e.clientY -  windowHalfY) - (mouse.ydown - windowHalfY)) * 0.00025;
+        }
+    }
+  
+  lookAtPoint = (e) => {
+
+        let vector = new THREE.Vector2();
+        vector.set(
+           ((mouse.xdown - 1) / window.innerWidth) * 2 - 1,
+          -((mouse.ydown - 1) / window.innerHeight) * 2 + 1 
+        )
         
-        mouseXOnMouseDown = e.clientX - windowHalfX
-        mouseYOnMouseDown = e.clientY - windowHalfY
-    }
+        raycaster.setFromCamera(vector, camera)
+        
+        let target = raycaster.intersectObject(world, true)
+        // Get point in  latitude/longitude coordinates format
+        var latlng = convertoLatLng(pickerPoint)
+        console.log(latlng)
+        // Get new camera position
+        var temp = new THREE.Mesh();
+            //temp.position.copy(convertToXYZ(latlng, 200));
+            temp.position.copy(latlng);
+            temp.lookAt(world.position);
+        //temp.rotateY(Math.PI);
+
+        for (let key in temp.rotation) {
+          if (temp.rotation[key] - camera.rotation[key] > Math.PI) {
+            temp.rotation[key] -= Math.PI * 2;
+          } else if (camera.rotation[key] - temp.rotation[key] > Math.PI) {
+            temp.rotation[key] += Math.PI * 2;
+          }
+        }
+        /*if(latlng[0] !== 0 && latlng[1] !== 0){
+          var tweenPos = getTween.call(camera, 'position', temp.position);
+          d3.timer(tweenPos);
+
+          var tweenRot = getTween.call(camera, 'rotation', temp.rotation);
+          d3.timer(tweenRot);
+        }*/
+  } 
     
-    var onDocumentMouseMove = (e) => {
-        mouseX = e.clientX - windowHalfX;
-        mouseY = e.clientY - windowHalfY;
-        targetRotationX = ( mouseX - mouseXOnMouseDown ) * 0.00025;
-        targetRotationY = ( mouseY - mouseYOnMouseDown ) * 0.00025;
-    }
+  createpointer = (mesh) => {
+     if (pointer) mesh.remove(pointer); 
+     pointer = new THREE.Mesh(pointerGeometry, pointerMaterial);
+     pointer.position.copy(pickerPoint);
+     mesh.add(pointer); 
+  }
+  
+  highlightCounty = (point, mesh) => {  //x and y coordinates keeps beetween -1 and 1 
+     var map, material;
+     var latlng = convertoLatLng(point,sphereRadius);  // Get point in  latitude/longitude coordinates format
+          
+     // Look for country at that latitude/longitude
+     var country = geo.search(latlng[0], latlng[1]);
+
+     if (country !== null && country.code !== currentCountry) {
+
+      // Track the current country displayed
+      currentCountry = country.code
+      this.props.onCountryChange(currentCountry)
+      
+      // Overlay the selected country
+      /*
+      map = textureCache(country.code, 'grey');
+      material = new THREE.MeshPhongMaterial({map: map, transparent: true});
+      if (!overlay) {  
+          overlay = new THREE.Mesh(new THREE.SphereGeometry(201, 40, 40), material);
+          world.add(overlay);
+       } else {
+         overlay.material = material;
+      }*/
+      }
+  } 
+  
+  render() { 
     
-    var onDocumentMouseUp = (e) => {
-        document.removeEventListener( 'mousemove', onDocumentMouseMove, false );
-        document.removeEventListener( 'mouseup', onDocumentMouseUp, false );
-        document.removeEventListener( 'mouseout', onDocumentMouseOut, false );
-    }
+    //Creates common geometry 
+    var sphere = new THREE.SphereGeometry(sphereRadius, sphereSegments, sphereSegments);
+
+    var waterMaterial  = new THREE.MeshPhongMaterial({color: '#056dba', 
+                                                      transparent: true});
+    var mapMaterial = new THREE.MeshPhongMaterial({ map: mapTexturer(topojson.feature(worlddata, worlddata.objects.countries), '#2ecc6f'), 
+                                                    transparent: true});
+    var wireframeMaterial = new THREE.MeshPhongMaterial({wireframe: true, transparent: true })
+    wireframeMaterial.opacity = wireframeOpacity
+    var waterMesh = new THREE.Mesh(sphere, waterMaterial);
+    var mapMesh = new THREE.Mesh(sphere, mapMaterial);
+    var wireframedMesh = new THREE.Mesh(new THREE.SphereGeometry(sphereRadius + 1 , sphereSegments, sphereSegments), 
+                                        wireframeMaterial)
+    waterMesh.rotation.y = Math.PI;
+    mapMesh.rotation.y = Math.PI;
+    wireframedMesh.rotation.y = Math.PI;
     
-    var onDocumentMouseOut = (e) => {
-        document.removeEventListener( 'mousemove', onDocumentMouseMove, false );
-        document.removeEventListener( 'mouseup', onDocumentMouseUp, false );
-        document.removeEventListener( 'mouseout', onDocumentMouseOut, false );
-    }
-    
+    world.add(waterMesh)
+    world.add(mapMesh)
+    world.add(wireframedMesh)
+    scene.add(world)
+        
+    camera.updateMatrixWorld();
+
+    var textureCache = memoize(function (cntryID, color) {
+      console.log('entré a textureCache')
+      var country = geo.find(cntryID);
+      return mapTexturer(country, color)
+    });
+      
     var reRender = () => {
-        //root.rotation.y += 0.02;
         requestAnimationFrame(reRender.bind(this))
         this.rotateWorld(world, new THREE.Vector3(0, 1, 0), targetRotationX)
         this.rotateWorld(world, new THREE.Vector3(1, 0, 0), targetRotationY)
         targetRotationY = targetRotationY * (1 - easeFactor);    //couldbe changed!
         targetRotationX = targetRotationX * (1 - easeFactor); //couldbe changed!
+        camera.updateMatrixWorld();
+       //RAYCASTING
+        mouseVector.x = mouse.x
+        mouseVector.y = mouse.y
+        raycaster.setFromCamera(mouseVector, camera)
+        let target = raycaster.intersectObject(wireframedMesh, false) //(world, true)
+        target.length > 0 && this.highlightCounty(pickerPoint, world)
+        //pointer
+        this.props.showPointer && this.createpointer(wireframedMesh)
+        
         renderer.render(scene, camera);
     }
     
-    document.addEventListener( 'mousedown', onDocumentMouseDown, false );
+    window.addEventListener('mousedown', this.handleClick )
+    window.addEventListener('mousemove', this.handleMouseMove )
+    window.addEventListener('mouseup', () => mouse.down = false , false )
+    window.addEventListener('mouseout', () => mouse.move = false , false )
+
     requestAnimationFrame(reRender.bind(this))
     
-     
-   return (<div></div>)
+    return (<div id='worldContainer'></div>)
+    
    }
   
 }
+
+THREE.Mesh.prototype.raycast = (function () {
+  var originalRaycast = THREE.Mesh.prototype.raycast;
+  var localPoint = new THREE.Vector3 ()
+
+  return function (raycaster, intersects) {
+          originalRaycast.call (this, raycaster, intersects);
+          for (var i = 0, n = intersects.length; i < n; i++) {
+              if (this === intersects[i].object) {
+                  this.worldToLocal (localPoint.copy (intersects[i].point));       
+              
+                  var face = intersects[i].face, faceIndex = intersects[i].faceIndex
+                     // Get the vertices intersected
+                  let a = this.geometry.vertices[face.a];
+                  let b = this.geometry.vertices[face.b];
+                  let c = this.geometry.vertices[face.c];
+
+                  // Averge them together
+                  let point = {
+                    x: (a.x + b.x + c.x) / 3,
+                    y: (a.y + b.y + c.y) / 3,
+                    z: (a.z + b.z + c.z) / 3
+                  };
+
+                  pickerPoint = point
+           }}}
+})();
