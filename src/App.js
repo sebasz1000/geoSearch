@@ -1,10 +1,8 @@
 import React, { Component } from 'react';
 import './css/app.css';
-import World from './Map.js'
+import Globe from './Globe.js'
 
-var currentCountry; //convert dangerously to state object BEWARE! must modify SHOULDCOMPONENTUPDATE() to prevent default react component re rendering
-
-class App extends Component {
+class App extends React.Component {
   constructor(props){
     super(props)
     this.state = {
@@ -13,11 +11,7 @@ class App extends Component {
     }
   }
   
-  getCurrentCountry = (countryName) =>{
-    console.log(countryName)
-    currentCountry = countryName
-    document.getElementById('countryName').innerHTML = currentCountry
-  }
+  getCurrentCountry = (countryName) => this.setState({currentCountry: countryName})
   
   render() {
     var countryNameStyle = {
@@ -36,8 +30,9 @@ class App extends Component {
         <p className="App-intro">
            <code style={{color: 'white'}}>Draggable 3D world using ThreeJS and D3-geoJS on ReactJS</code>
         </p>
-        <p id='countryName' style={countryNameStyle}></p>
-        <World showPointer={true} onCountryChange={this.getCurrentCountry}/>
+        <p id='countryName' style={countryNameStyle}>{this.state.currentCountry}</p>
+        <Globe showPointer={true} 
+               onCountryChange={this.getCurrentCountry}/>
       </div>
     );
   }

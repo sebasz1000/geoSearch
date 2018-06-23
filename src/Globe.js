@@ -16,7 +16,7 @@ var targetRotationX = 0.5, targetRotationY = 0.2;
 var windowHalfX = window.innerWidth / 2, windowHalfY = window.innerHeight / 2; 
 var currentCountry, overlay, pointer;
 var world = new THREE.Object3D();   // acts as an common 3d anchor point
-
+world.name = 'World Obj'
 var countries = topojson.feature(worlddata, worlddata.objects.countries)
 var geo = geodecoder(countries.features);
 
@@ -29,14 +29,16 @@ var sphereSegments = 300; // vertices of the wireframesSphere. Higher improves m
 var sphereRadius = 230;
 var wireframeOpacity = 0.15
 
-export default class WorldMap extends Component {
+export default class Globe extends React.Component{
   
-  constructor(props){
-    super(props)
-    this.state = {
-      currentCountry: ''
-    }
+  shouldComponentUpdate(nextProps, nextState){ // this Component will never re render.
+    return false;
   }
+  
+  textureCache = memoize(function (cntryID, color) {
+      var country = geo.find(cntryID);
+      return mapTexturer(country, color)
+  });
   
   rotateWorld = (object,axis, radians) => { // look for arms reference to look for better rotation!
      var rotationMatrix = new THREE.Matrix4();
@@ -107,29 +109,28 @@ export default class WorldMap extends Component {
      mesh.add(pointer); 
   }
   
-  highlightCounty = (point, mesh) => {  //x and y coordinates keeps beetween -1 and 1 
+  highlightCounty = (point, mesh) => {
+    
      var map, material;
-     var latlng = convertoLatLng(point,sphereRadius);  // Get point in  latitude/longitude coordinates format
+     var latlng = convertoLatLng(point,sphereRadius);
           
      // Look for country at that latitude/longitude
      var country = geo.search(latlng[0], latlng[1]);
 
      if (country !== null && country.code !== currentCountry) {
+        currentCountry = country.code
+        this.props.onCountryChange(currentCountry)
 
-      // Track the current country displayed
-      currentCountry = country.code
-      this.props.onCountryChange(currentCountry)
-      
-      // Overlay the selected country
-      /*
-      map = textureCache(country.code, 'grey');
-      material = new THREE.MeshPhongMaterial({map: map, transparent: true});
-      if (!overlay) {  
-          overlay = new THREE.Mesh(new THREE.SphereGeometry(201, 40, 40), material);
-          world.add(overlay);
-       } else {
-         overlay.material = material;
-      }*/
+        // Overlay the selected country
+        map = this.textureCache(country.code, '#ffaa6f');
+        material = new THREE.MeshPhongMaterial({map: map, transparent: false });
+          if (!overlay) {  
+              overlay = new THREE.Mesh(new THREE.SphereGeometry(204, 40, 40), material);
+              overlay.name = 'Highlighter Mesh'
+              mesh.add(overlay);
+           } else {
+             overlay.material = material;
+          }
       }
   } 
   
@@ -148,6 +149,9 @@ export default class WorldMap extends Component {
     var mapMesh = new THREE.Mesh(sphere, mapMaterial);
     var wireframedMesh = new THREE.Mesh(new THREE.SphereGeometry(sphereRadius + 1 , sphereSegments, sphereSegments), 
                                         wireframeMaterial)
+    waterMesh.name = 'Water Mesh'
+    mapMesh.name = 'Map Mesh'
+    wireframedMesh.name = 'Wireframed Mesh'
     waterMesh.rotation.y = Math.PI;
     mapMesh.rotation.y = Math.PI;
     wireframedMesh.rotation.y = Math.PI;
@@ -158,12 +162,6 @@ export default class WorldMap extends Component {
     scene.add(world)
         
     camera.updateMatrixWorld();
-
-    var textureCache = memoize(function (cntryID, color) {
-      console.log('entré a textureCache')
-      var country = geo.find(cntryID);
-      return mapTexturer(country, color)
-    });
       
     var reRender = () => {
         requestAnimationFrame(reRender.bind(this))
@@ -171,7 +169,7 @@ export default class WorldMap extends Component {
         this.rotateWorld(world, new THREE.Vector3(1, 0, 0), targetRotationY)
         targetRotationY = targetRotationY * (1 - easeFactor);    //couldbe changed!
         targetRotationX = targetRotationX * (1 - easeFactor); //couldbe changed!
-        camera.updateMatrixWorld();
+      
        //RAYCASTING
         mouseVector.x = mouse.x
         mouseVector.y = mouse.y
@@ -180,7 +178,7 @@ export default class WorldMap extends Component {
         target.length > 0 && this.highlightCounty(pickerPoint, world)
         //pointer
         this.props.showPointer && this.createpointer(wireframedMesh)
-        
+        camera.updateMatrixWorld();
         renderer.render(scene, camera);
     }
     
