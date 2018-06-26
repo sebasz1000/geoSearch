@@ -1,4 +1,4 @@
-import React, { Component } from 'react';
+import React from 'react';
 import './css/app.css';
 import Globe from './Globe.js'
 
@@ -32,7 +32,8 @@ class App extends React.Component {
         </p>
         <p id='countryName' style={countryNameStyle}>{this.state.currentCountry}</p>
         <Globe showPointer={true} 
-               onCountryChange={this.getCurrentCountry}/>
+               onCountryChange={this.getCurrentCountry}
+               rotable={false}/>
       </div>
     );
   }

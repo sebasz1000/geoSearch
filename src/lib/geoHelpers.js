@@ -1,6 +1,5 @@
 var THREE = require('three')
 
-
 export function getPoint(event) {
  console.log(event)
   // Get the vertices
@@ -41,24 +40,12 @@ export function convertoLatLng(point, radius) { //CONVERTO TO PACKAGE!
 
 export function convertToXYZ(point, radius) {
   radius = radius || 200;
-
   var latRads = ( 90 - point[0]) * Math.PI / 180;
   var lngRads = (180 - point[1]) * Math.PI / 180;
-
-  var x = radius * Math.sin(latRads) * Math.cos(lngRads);
-  var y = radius * Math.cos(latRads);
-  var z = radius * Math.sin(latRads) * Math.sin(lngRads);
-
-  return {x: x, y: y, z: z};
-  /*var out = new THREE.Vector3();
-  var lat = Math.PI / 2 - point[0]
-  out.set(
-                Math.sin( lat ) * Math.sin( point[1] ) * radius,
-                Math.cos( lat ) * radius,
-                Math.sin( lat ) * Math.cos( point[1] ) * radius
-    );
-
-    return out;*/
+  var vector = new THREE.Vector3( radius * Math.sin(latRads) * Math.cos(lngRads),
+                                  radius * Math.cos(latRads),
+                                  radius * Math.sin(latRads) * Math.sin(lngRads))
+  return vector
 }
 
 
