@@ -45,6 +45,7 @@ export default class Globe extends React.Component{
   
   componentDidMount(){
   initialCameraSetup.copy(camera)
+  console.log(camera.position.x + ' ' + camera.position.y + ' ' + camera.position.z)
   } 
   
   textureCache = memoize(function (cntryID, color) {
@@ -102,10 +103,20 @@ export default class Globe extends React.Component{
       update: function(d){
         console.log('Reseting position')
       }
-    })                
+    })  
+     this.makeTweenVector(camera.rotation, { x: initCamera.rotation.x, y: initCamera.rotation.y,  z: initCamera.rotation.z } , {
+      duration: 1000,
+      easing: TWEEN.Easing.Quadratic.Out,
+      update: function(d){
+        console.log('Reseting Rotation')
+      }
+    }) 
   }
     
   lookAtPoint = (e) => {
+    
+        const cameraAltitude = 200; //gives a good camera distance from the selected point
+    
         let vector = new THREE.Vector3();
         vector.set(  ((e.clientX  - 1) / window.innerWidth) * 2 - 1,
                     -((e.clientY - 1) / window.innerHeight) * 2 + 1,
@@ -129,13 +140,21 @@ export default class Globe extends React.Component{
               }
             }
           
-            this.makeTweenVector(camera.position, temp.position, {
-              duration: 1000,
+            this.makeTweenVector(camera.position, { x: temp.position.x, y: temp.position.y, z: temp.position.z + cameraAltitude }, {
+              duration: 1500,
               easing:  TWEEN.Easing.Quadratic.In,
-              update: function(d){
-                console.log('Updating close up: ' + d.position)
+              update: function(vector){
+                console.log(vector.x + ' ' + vector.y  + ' ' + vector.z)
               },
             }) 
+            
+            /*this.makeTweenVector(camera.rotation, { x: temp.rotation.x, y: temp.rotation.y, z: temp.rotation.z }, {
+              duration: 1500,
+              easing:  TWEEN.Easing.Quadratic.In,
+              update: function(vector){
+                console.log(vector.x + ' ' + vector.y  + ' ' + vector.z)
+              },
+            }) */
             //makeTween for rotation!!! MAKE ROTATION TESTS!
        }
   } 
@@ -196,11 +215,18 @@ export default class Globe extends React.Component{
         
     camera.updateMatrixWorld();
       
-    var animate = () => {
-        requestAnimationFrame(animate.bind(this))
-        !this.props.rotable && TWEEN.update();
-        this.props.rotable && this.rotateWorld(world, new THREE.Vector3(0, 1, 0), targetRotationX)
-        this.props.rotable && this.rotateWorld(world, new THREE.Vector3(1, 0, 0), targetRotationY)
+    var update = () => { // render() doesnt call with props or state updates, but update() keeps working every animFrame
+        requestAnimationFrame(update.bind(this))
+        if(this.props.rotable){
+          this.props.rotable && this.rotateWorld(world, new THREE.Vector3(0, 1, 0), targetRotationX)
+          this.props.rotable && this.rotateWorld(world, new THREE.Vector3(1, 0, 0), targetRotationY)
+        }
+        if(!this.props.rotable){
+         TWEEN.update();
+         window.addEventListener('dblclick', this.lookAtPoint )
+        }
+       
+        
         targetRotationY = targetRotationY * (1 - easeFactor);    //couldbe changed!
         targetRotationX = targetRotationX * (1 - easeFactor); //couldbe changed!
       
@@ -213,13 +239,15 @@ export default class Globe extends React.Component{
         camera.updateMatrixWorld();
         renderer.render(scene, camera);
     }
-    !this.props.rotable && window.addEventListener('mousedown', this.lookAtPoint )
+
+   
     window.addEventListener('mousedown', this.handleClick )
     window.addEventListener('mousemove', this.handleMouseMove )
     window.addEventListener('mouseup', () => mouse.down = false , false )
     window.addEventListener('mouseout', () => mouse.move = false , false )
+    window.addEventListener('contextmenu', event => event.preventDefault());
 
-    requestAnimationFrame(animate.bind(this))
+    requestAnimationFrame(update.bind(this))
     
     return (<div id='worldContainer'></div>)
     

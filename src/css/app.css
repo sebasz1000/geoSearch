@@ -5,7 +5,9 @@ position:relative;
 
 .appHeader {
   text-align: center;
-  z-index: 10
+  z-index: 10;
+  padding: 14px;
+  position: relative;
 }
 
 .App-logo {
