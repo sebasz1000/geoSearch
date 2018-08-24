@@ -4,9 +4,11 @@ var THREE = require('three')
 export var scene = new THREE.Scene();
 
 export var camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 1, 5000);
-           camera.position.set(1,1,500);
+           
+var canvas = document.createElement("canvas");
+canvas.setAttribute('id','canvas')
 
-export var renderer = new THREE.WebGLRenderer({antialias: true});
+export var renderer = new THREE.WebGLRenderer({antialias: true, canvas: canvas});
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio)
             document.body.appendChild(renderer.domElement); //I WOULD RETURN renderer.domElement in this method!

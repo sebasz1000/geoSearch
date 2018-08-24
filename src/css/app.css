@@ -48,3 +48,20 @@ canvas{
   left: 0;
   z-index: 1
 }
+
+#list{
+  width: 400px;
+  background-color: white;
+  opacity: 0.9;
+  padding: 10px 40px;
+}
+
+
+#listItem{
+  width: 100%;
+  background-color: white;
+  opacity: 0.9;
+  display: flex;
+  justify-content: space-between;
+  
+}

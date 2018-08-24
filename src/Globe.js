@@ -4,38 +4,40 @@ import { convertoLatLng, convertToXYZ, geodecoder } from './lib/geoHelpers';
 import mapTexturer from './lib/mapTexturer'
 import { memoize } from './lib/utils';
 import worlddata from './data/world.json'
+const OrbitControls = require('three-orbitcontrols')
 var TWEEN = require('@tweenjs/tween.js');
 var topojson = require('topojson')
 var THREE = require('three')
 var raycaster = new THREE.Raycaster()
-var mouse = { x: 0, y: 0 , xdown: 0, ydown: 0, down: false, move: false }
+var mouse = { x: 0, y: 0 , z: 15}
 var pickerPoint = new THREE.Vector3();
-
-var targetRotationX = 0.5, targetRotationY = 0.2;
-var windowHalfX = window.innerWidth / 2, windowHalfY = window.innerHeight / 2; 
+var holdCountry = false;
 var currentCountry, overlay, pointer;
+const randomPoint = new THREE.Vector3()
 var world = new THREE.Object3D();   // acts as an common 3d anchor point
 world.name = 'World Obj'
 
 var countries = topojson.feature(worlddata, worlddata.objects.countries)
 var geo = geodecoder(countries.features);
 
-const pointerGeometry = new THREE.SphereGeometry(1, 300, 300);
+const pointerGeometry = new THREE.SphereGeometry(0.008, 300, 300);
 const pointerMaterial = new THREE.MeshPhongMaterial({color: 'red'});
 
 // world settings    
 var easeFactor = 0.10;  // lower it will stop later
 var sphereSegments = 400; // vertices of the wireframesSphere. Higher improves mouse accuracy
-var sphereRadius = 230;
+var sphereRadius = 10; //230
 var wireframeOpacity = 0.15
+const minAltitude = sphereRadius + 4
 
-var wireframeMaterial = new THREE.MeshPhongMaterial({wireframe: true, transparent: true })
-var wireframedMesh = new THREE.Mesh(new THREE.SphereGeometry(sphereRadius + 5 , sphereSegments, sphereSegments), 
+
+var wireframeMaterial = new THREE.MeshPhongMaterial({wireframe: true, transparent: true, opacity: 0.1 })
+var wireframedMesh = new THREE.Mesh(new THREE.SphereGeometry(sphereRadius + 0.04 , sphereSegments, sphereSegments), 
                                         wireframeMaterial)
-
 
 var initialCameraSetup = new THREE.PerspectiveCamera();
 
+const controls = new OrbitControls(camera, renderer.domElement)
 
 export default class Globe extends React.Component{
   
@@ -44,8 +46,11 @@ export default class Globe extends React.Component{
   }
   
   componentDidMount(){
-  initialCameraSetup.copy(camera)
-  console.log(camera.position.x + ' ' + camera.position.y + ' ' + camera.position.z)
+    initialCameraSetup.copy(camera)
+    controls.enableDamping = true
+    controls.minDistance = minAltitude
+    controls.maxDistance = sphereRadius + 12
+    camera.position.set(1,1,sphereRadius + 12);
   } 
   
   textureCache = memoize(function (cntryID, color) {
@@ -55,21 +60,17 @@ export default class Globe extends React.Component{
   
   handleClick = (e) => {
         e.preventDefault();
-        mouse.down = (e.buttons !== 0 ? true : false)
-        e.button === 2 && this.resetCameraPosition(initialCameraSetup)
-        mouse.xdown = e.clientX 
-        mouse.ydown = e.clientY
-       
+        e.button === 2 && console.log('SHOULD RESET CAMERA  ALTITUDE')
   }
   
   handleMouseMove = (e) => {
-        mouse.move = (e.type === 'mousemove' ? true : false)
         mouse.x = ( e.clientX / window.innerWidth ) * 2 - 1;
 		mouse.y = -( e.clientY / window.innerHeight ) * 2 + 1;
-        if(mouse.down){ // its gragging
-          targetRotationX = ( (e.clientX - windowHalfX) - (mouse.xdown - windowHalfX)) * 0.00025;
-          targetRotationY = ( (e.clientY -  windowHalfY) - (mouse.ydown - windowHalfY)) * 0.00025;
-        }
+    
+       //RAYCASTING
+        if(this.raycast(new THREE.Vector3(mouse.x, mouse.y, mouse.z), camera, wireframedMesh).length > 0 && !holdCountry) this.highlightCounty(pickerPoint, world)
+        //pointer
+        this.props.showPointer && this.createpointer(wireframedMesh)
     }
   
   makeTweenVector = (vectorToTween, target, options) => {
@@ -88,75 +89,51 @@ export default class Globe extends React.Component{
     return tween;
   }
   
-  rotateWorld = (object,axis, radians) => { // look for arms reference to look for better rotation!
-     var rotationMatrix = new THREE.Matrix4();
-         rotationMatrix.makeRotationAxis( axis.normalize(), radians );
-         rotationMatrix.multiply( object.matrix );                       
-      object.matrix = rotationMatrix;
-      object.rotation.setFromRotationMatrix( object.matrix );
+  makeTween = (source, target, options, method) => {
+   options = options || {} 
+   const tween = new TWEEN.Tween(source).to(target, options.speed).delay(options.delay).easing(TWEEN.Easing.Quadratic.Out).onUpdate(method).start()
   }
   
-  resetCameraPosition = (initCamera) => {
-    this.makeTweenVector(camera.position, initCamera.position, {
-      duration: 1000,
-      easing: TWEEN.Easing.Quadratic.Out,
-      update: function(d){
-        console.log('Reseting position')
-      }
-    })  
-     this.makeTweenVector(camera.rotation, { x: initCamera.rotation.x, y: initCamera.rotation.y,  z: initCamera.rotation.z } , {
-      duration: 1000,
-      easing: TWEEN.Easing.Quadratic.Out,
-      update: function(d){
-        console.log('Reseting Rotation')
-      }
-    }) 
+  cameraMove = (zoomFactor, targetVector) => {
+	var sourceAltitude = { length: camera.position.length() }
+	
+    this.makeTween(sourceAltitude, { length: zoomFactor }, { speed: 2000, delay: 300 } , () => {} ) // zoom in out
+   	
+    var interpolationAngles = this.getAngleFromVectors3(camera.position, targetVector)
+    var movingSpherical = new THREE.Spherical()
+      
+    this.makeTween(interpolationAngles[0], interpolationAngles[1], { speed: 2000, delay: 100 } , function(){   // cam rotation
+         movingSpherical.set( sourceAltitude.length, interpolationAngles[0].phi, interpolationAngles[0].theta);
+         camera.position.setFromSpherical(movingSpherical) 
+    })
+  
+    camera.updateProjectionMatrix()
   }
-    
+  
   lookAtPoint = (e) => {
     
-        const cameraAltitude = 200; //gives a good camera distance from the selected point
+   let vector = new THREE.Vector3();
+   vector.set(  ((e.clientX  - 1) / window.innerWidth) * 2 - 1,
+                 -((e.clientY - 1) / window.innerHeight) * 2 + 1,
+                 0.5 )
+  
+   if(this.raycast(vector, camera, wireframedMesh).length > 0){ 
+    holdCountry = true;
+    this.highlightCounty(pickerPoint, world)
+    randomPoint.set(THREE.Math.randFloat( -(sphereRadius + 5), sphereRadius + 5 ), 0 , sphereRadius + 5)
+    this.cameraMove(minAltitude, randomPoint) //zooms camera in
     
-        let vector = new THREE.Vector3();
-        vector.set(  ((e.clientX  - 1) / window.innerWidth) * 2 - 1,
-                    -((e.clientY - 1) / window.innerHeight) * 2 + 1,
-                     0.5 )
-        raycaster.setFromCamera(vector, camera)
-        let target = raycaster.intersectObject(wireframedMesh, false)
-
-        if(target.length > 0){           
-            // Get new camera position 
-            var temp = new THREE.Mesh();
-            var latlng = convertoLatLng(pickerPoint)
-            //temp.position.copy(convertToXYZ(latlng, 300)); works weird         
-            temp.position.copy(pickerPoint);   
-            temp.lookAt(world.position);  //IMPROVE RIGHT THIS POINT!  Z camera position is soo close !!
-
-            for (let key in temp.rotation) {
-              if (temp.rotation[key] - camera.rotation[key] > Math.PI) {
-                temp.rotation[key] -= Math.PI * 2;
-              } else if (camera.rotation[key] - temp.rotation[key] > Math.PI) {
-                temp.rotation[key] += Math.PI * 2;
-              }
-            }
-          
-            this.makeTweenVector(camera.position, { x: temp.position.x, y: temp.position.y, z: temp.position.z + cameraAltitude }, {
-              duration: 1500,
-              easing:  TWEEN.Easing.Quadratic.In,
-              update: function(vector){
-                console.log(vector.x + ' ' + vector.y  + ' ' + vector.z)
-              },
-            }) 
-            
-            /*this.makeTweenVector(camera.rotation, { x: temp.rotation.x, y: temp.rotation.y, z: temp.rotation.z }, {
-              duration: 1500,
-              easing:  TWEEN.Easing.Quadratic.In,
-              update: function(vector){
-                console.log(vector.x + ' ' + vector.y  + ' ' + vector.z)
-              },
-            }) */
-            //makeTween for rotation!!! MAKE ROTATION TESTS!
-       }
+    const euler = new THREE.Euler()
+    var startQuaternion = new THREE.Quaternion()
+    const endQuaternion = this.getQuaternionFromPoints(pickerPoint, randomPoint)    
+    startQuaternion.copy(world.quaternion).normalize()
+      
+    this.makeTween(startQuaternion, endQuaternion, { speed: 2000, delay: 300 } ,   //sphere rotation
+      function(){
+        euler.setFromQuaternion(startQuaternion)
+        world.setRotationFromEuler(euler)
+    })
+   }       
   } 
     
   createpointer = (mesh) => {
@@ -182,7 +159,7 @@ export default class Globe extends React.Component{
         map = this.textureCache(country.code, '#ffaa6f');
         material = new THREE.MeshPhongMaterial({map: map, transparent: true });
           if (!overlay) {  
-              overlay = new THREE.Mesh(new THREE.SphereGeometry(sphereRadius + 1 , 40, 40), material);
+              overlay = new THREE.Mesh(new THREE.SphereGeometry(sphereRadius + 0.04 , 40, 40), material);
               overlay.name = 'Highlighter Mesh'
               mesh.add(overlay);
            } else {
@@ -191,6 +168,46 @@ export default class Globe extends React.Component{
       }
   } 
   
+  raycast = (vector, cam, mesh) => {
+    vector = vector || new THREE.Vector3()
+    raycaster.setFromCamera(vector, cam)
+    return raycaster.intersectObject(mesh, false) //(world, true)
+  }
+  
+  getAngleFromVectors3 = (initPoint, endPoint) => {  // returns source and target angles between two spherical points to make interpolation
+
+    const sphericalStart = new THREE.Spherical()
+    const sphericalEnd = new THREE.Spherical()
+      const sourceAngle = {
+          phi: 0,
+          theta: 0
+    };
+    const targetAngle = {
+          phi: 0,
+          theta: 0
+    };
+    sphericalStart.setFromVector3(initPoint)
+    sphericalEnd.setFromVector3(endPoint)
+    sphericalEnd.makeSafe()
+
+    sourceAngle.phi = sphericalStart.phi
+    sourceAngle.theta = sphericalStart.theta
+    targetAngle.phi = sphericalEnd.phi
+    targetAngle.theta = sphericalEnd.theta
+
+    return [sourceAngle, targetAngle]
+ }
+
+  getQuaternionFromPoints = (initPoint, endPoint) => {
+    var startVector = (initPoint === undefined ? new THREE.Vector3() : initPoint.normalize())
+    var endVector = (endPoint === undefined ? new THREE.Vector3() : endPoint.normalize())
+    var q = new THREE.Quaternion();
+
+    q.setFromUnitVectors(startVector, endVector)
+
+    return q 
+  }
+
   render() { 
     
     //Creates common geometry 
@@ -216,40 +233,24 @@ export default class Globe extends React.Component{
     camera.updateMatrixWorld();
       
     var update = () => { // render() doesnt call with props or state updates, but update() keeps working every animFrame
-        requestAnimationFrame(update.bind(this))
-        if(this.props.rotable){
-          this.props.rotable && this.rotateWorld(world, new THREE.Vector3(0, 1, 0), targetRotationX)
-          this.props.rotable && this.rotateWorld(world, new THREE.Vector3(1, 0, 0), targetRotationY)
-        }
-        if(!this.props.rotable){
-         TWEEN.update();
-         window.addEventListener('dblclick', this.lookAtPoint )
-        }
-       
-        
-        targetRotationY = targetRotationY * (1 - easeFactor);    //couldbe changed!
-        targetRotationX = targetRotationX * (1 - easeFactor); //couldbe changed!
       
-       //RAYCASTING
-        raycaster.setFromCamera(new THREE.Vector2(mouse.x, mouse.y), camera)
-        let target = raycaster.intersectObject(wireframedMesh, false) //(world, true)
-        target.length > 0 && this.highlightCounty(pickerPoint, world)
-        //pointer
-        this.props.showPointer && this.createpointer(wireframedMesh)
+        requestAnimationFrame(update.bind(this))
+       
+        TWEEN.update();
         camera.updateMatrixWorld();
+        controls.update();
         renderer.render(scene, camera);
     }
 
-   
+    window.addEventListener('dblclick', this.lookAtPoint )
     window.addEventListener('mousedown', this.handleClick )
     window.addEventListener('mousemove', this.handleMouseMove )
-    window.addEventListener('mouseup', () => mouse.down = false , false )
-    window.addEventListener('mouseout', () => mouse.move = false , false )
-    window.addEventListener('contextmenu', event => event.preventDefault());
+    //window.addEventListener('contextmenu', event => event.preventDefault());
+    document.getElementById('canvas').addEventListener('wheel', (e) => {  if(e.deltaY > 0) holdCountry = false;  });
 
     requestAnimationFrame(update.bind(this))
     
-    return (<div id='worldContainer'></div>)
+    return null
     
    }
   
